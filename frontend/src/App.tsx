@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 
+const API_BASE_URL = "https://dealzone-2j3o.onrender.com";
+
 type Offer = {
   id: number;
   telegram_message_id: number;
@@ -35,8 +37,8 @@ function App() {
   const fetchOffers = async () => {
     try {
       const response = await fetch(
-        "http://127.0.0.1:8000/offers"
-      );
+      `${API_BASE_URL}/offers`
+    );
 
       const data = await response.json();
 
@@ -579,7 +581,7 @@ function OfferCard({
         {offer.fallback_image_url ? (
 
           <img
-            src={`http://127.0.0.1:8000${offer.fallback_image_url}`}
+            src={`${API_BASE_URL}${offer.fallback_image_url}`}
             alt={offer.store}
             className="offer-product-image store-logo"
           />
