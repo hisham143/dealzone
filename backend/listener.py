@@ -34,7 +34,7 @@ CHANNEL = int(os.getenv("TELEGRAM_CHANNEL"))
 # ==========================================
 
 client = TelegramClient(
-    "deal_listener",
+    StringSession(TELEGRAM_SESSION),
     API_ID,
     API_HASH
 )
@@ -245,20 +245,21 @@ def get_latest_saved_message_id():
 
     connection = get_connection()
 
-    result = connection.execute(
-        """
-        SELECT MAX(telegram_message_id)
-        FROM offers
-        """
-    ).fetchone()
+    try:
+        result = connection.execute(
+            """
+            SELECT MAX(telegram_message_id) AS max_message_id
+            FROM offers
+            """
+        ).fetchone()
 
-    connection.close()
+        if result["max_message_id"] is None:
+            return 0
 
-    if result[0] is None:
-        return 0
+        return result["max_message_id"]
 
-    return result[0]
-
+    finally:
+        connection.close()
 
 # ==========================================
 # Sync missed Telegram offers
