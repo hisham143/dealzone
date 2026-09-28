@@ -1,11 +1,7 @@
 from fastapi import FastAPI, HTTPException
-
 from fastapi.middleware.cors import CORSMiddleware
-
 from database import get_connection
-
 from pathlib import Path
-
 from fastapi.staticfiles import StaticFiles
 
 
@@ -31,7 +27,6 @@ MEDIA_DIR.mkdir(
     exist_ok=True
 )
 
-
 app.mount(
     "/media",
     StaticFiles(directory=MEDIA_DIR),
@@ -45,16 +40,13 @@ app.mount(
 
 app.add_middleware(
     CORSMiddleware,
-
     allow_origins=[
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "https://dealzone-sigma.vercel.app",
     ],
-
     allow_credentials=True,
-
     allow_methods=["*"],
-
     allow_headers=["*"],
 )
 
@@ -86,7 +78,6 @@ def get_fallback_image(store):
     Return a local store logo when
     Telegram product images are not used.
     """
-
     return STORE_LOGOS.get(store)
 
 
@@ -96,7 +87,6 @@ def get_fallback_image(store):
 
 @app.get("/")
 def home():
-
     return {
         "message": "Telegram Deals API is running",
         "status": "success"
@@ -112,45 +102,41 @@ def get_offers():
 
     connection = get_connection()
 
-    offers = connection.execute(
-        """
-        SELECT
-            id,
-            telegram_message_id,
-            title,
-            store,
-            discount,
-            category,
-            description,
-            links,
-            image_url,
-            message_date,
-            created_at
-        FROM offers
+    try:
+        offers = connection.execute(
+            """
+            SELECT
+                id,
+                telegram_message_id,
+                title,
+                store,
+                discount,
+                category,
+                description,
+                links,
+                image_url,
+                message_date,
+                created_at
+            FROM offers
+            ORDER BY telegram_message_id DESC
+            """
+        ).fetchall()
 
-        ORDER BY
-            telegram_message_id DESC
-        """
-    ).fetchall()
+        return {
+            "count": len(offers),
+            "offers": [
+                {
+                    **dict(offer),
+                    "fallback_image_url": get_fallback_image(
+                        offer["store"]
+                    )
+                }
+                for offer in offers
+            ]
+        }
 
-    connection.close()
-
-    return {
-        "count": len(offers),
-
-        "offers": [
-
-            {
-                **dict(offer),
-
-                "fallback_image_url": get_fallback_image(
-                    offer["store"]
-                )
-            }
-
-            for offer in offers
-        ]
-    }
+    finally:
+        connection.close()
 
 
 # ==========================================
@@ -162,40 +148,42 @@ def get_latest_offers():
 
     connection = get_connection()
 
-    offers = connection.execute(
-        """
-        SELECT
-            id,
-            telegram_message_id,
-            title,
-            store,
-            discount,
-            category,
-            description,
-            links,
-            image_url,
-            message_date,
-            created_at
+    try:
+        offers = connection.execute(
+            """
+            SELECT
+                id,
+                telegram_message_id,
+                title,
+                store,
+                discount,
+                category,
+                description,
+                links,
+                image_url,
+                message_date,
+                created_at
+            FROM offers
+            ORDER BY telegram_message_id DESC
+            LIMIT 10
+            """
+        ).fetchall()
 
-        FROM offers
+        return {
+            "count": len(offers),
+            "offers": [
+                {
+                    **dict(offer),
+                    "fallback_image_url": get_fallback_image(
+                        offer["store"]
+                    )
+                }
+                for offer in offers
+            ]
+        }
 
-        ORDER BY
-            telegram_message_id DESC
-
-        LIMIT 10
-        """
-    ).fetchall()
-
-    connection.close()
-
-    return {
-        "count": len(offers),
-
-        "offers": [
-            dict(offer)
-            for offer in offers
-        ]
-    }
+    finally:
+        connection.close()
 
 
 # ==========================================
@@ -207,44 +195,42 @@ def get_offer(offer_id: int):
 
     connection = get_connection()
 
-    offer = connection.execute(
-        """
-        SELECT
-            id,
-            telegram_message_id,
-            title,
-            store,
-            discount,
-            category,
-            description,
-            links,
-            image_url,
-            message_date,
-            created_at
+    try:
+        offer = connection.execute(
+            """
+            SELECT
+                id,
+                telegram_message_id,
+                title,
+                store,
+                discount,
+                category,
+                description,
+                links,
+                image_url,
+                message_date,
+                created_at
+            FROM offers
+            WHERE id = %s
+            """,
+            (offer_id,)
+        ).fetchone()
 
-        FROM offers
+        if offer is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Offer not found"
+            )
 
-        WHERE id = ?
-        """,
-        (offer_id,)
-    ).fetchone()
+        return {
+            **dict(offer),
+            "fallback_image_url": get_fallback_image(
+                offer["store"]
+            )
+        }
 
-    connection.close()
-
-    if offer is None:
-
-        raise HTTPException(
-            status_code=404,
-            detail="Offer not found"
-        )
-
-    return {
-        **dict(offer),
-
-        "fallback_image_url": get_fallback_image(
-            offer["store"]
-        )
-    }
+    finally:
+        connection.close()
 
 
 # ==========================================
@@ -256,28 +242,26 @@ def get_categories():
 
     connection = get_connection()
 
-    categories = connection.execute(
-        """
-        SELECT DISTINCT category
+    try:
+        categories = connection.execute(
+            """
+            SELECT DISTINCT category
+            FROM offers
+            WHERE category IS NOT NULL
+            AND category != ''
+            ORDER BY category
+            """
+        ).fetchall()
 
-        FROM offers
+        return {
+            "categories": [
+                row["category"]
+                for row in categories
+            ]
+        }
 
-        WHERE category IS NOT NULL
-
-        AND category != ''
-
-        ORDER BY category
-        """
-    ).fetchall()
-
-    connection.close()
-
-    return {
-        "categories": [
-            row["category"]
-            for row in categories
-        ]
-    }
+    finally:
+        connection.close()
 
 
 # ==========================================
@@ -289,25 +273,23 @@ def get_stores():
 
     connection = get_connection()
 
-    stores = connection.execute(
-        """
-        SELECT DISTINCT store
+    try:
+        stores = connection.execute(
+            """
+            SELECT DISTINCT store
+            FROM offers
+            WHERE store IS NOT NULL
+            AND store != ''
+            ORDER BY store
+            """
+        ).fetchall()
 
-        FROM offers
+        return {
+            "stores": [
+                row["store"]
+                for row in stores
+            ]
+        }
 
-        WHERE store IS NOT NULL
-
-        AND store != ''
-
-        ORDER BY store
-        """
-    ).fetchall()
-
-    connection.close()
-
-    return {
-        "stores": [
-            row["store"]
-            for row in stores
-        ]
-    }
+    finally:
+        connection.close()

@@ -1,38 +1,48 @@
-import sqlite3
+import os
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
-DATABASE_PATH = Path(__file__).parent / "offers.db"
+import psycopg
+from psycopg.rows import dict_row
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
 MEDIA_DIR = Path(__file__).parent / "media" / "offers"
 
 
 def get_connection():
-    connection = sqlite3.connect(DATABASE_PATH)
-    connection.row_factory = sqlite3.Row
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL is not configured. "
+            "Add it to the backend .env file."
+        )
+
+    connection = psycopg.connect(
+        DATABASE_URL,
+        row_factory=dict_row
+    )
+
     return connection
 
 
 def create_database():
+    """
+    Verify that the offers table exists in PostgreSQL.
+
+    The table itself is created in Supabase SQL Editor.
+    """
+
     connection = get_connection()
 
-    connection.execute("""
-        CREATE TABLE IF NOT EXISTS offers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            telegram_message_id INTEGER UNIQUE,
-            title TEXT,
-            store TEXT,
-            discount TEXT,
-            category TEXT,
-            description TEXT,
-            links TEXT,
-            image_url TEXT,
-            message_date TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    connection.commit()
-    connection.close()
+    try:
+        connection.execute("SELECT 1 FROM offers LIMIT 1")
+        print("✅ PostgreSQL database connection successful.")
+        print("✅ 'offers' table is available.")
+    finally:
+        connection.close()
 
 
 def save_offer(
@@ -48,107 +58,107 @@ def save_offer(
 ):
     connection = get_connection()
 
-    connection.execute("""
-        INSERT OR IGNORE INTO offers (
-            telegram_message_id,
-            title,
-            store,
-            discount,
-            category,
-            description,
-            links,
-            image_url,
-            message_date
+    try:
+        connection.execute(
+            """
+            INSERT INTO offers (
+                telegram_message_id,
+                title,
+                store,
+                discount,
+                category,
+                description,
+                links,
+                image_url,
+                message_date
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (telegram_message_id) DO NOTHING
+            """,
+            (
+                telegram_message_id,
+                title,
+                store,
+                discount,
+                category,
+                description,
+                links,
+                image_url,
+                message_date
+            )
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        telegram_message_id,
-        title,
-        store,
-        discount,
-        category,
-        description,
-        links,
-        image_url,
-        message_date
-    ))
 
-    connection.commit()
-    connection.close()
+        connection.commit()
+
+    finally:
+        connection.close()
 
 
 def cleanup_expired_offers():
     """
-    Delete offers older than 2 days
-    and remove their associated image files.
+    Delete offers older than 2 days.
+
+    Telegram images are currently disabled, so there
+    should normally be no image files to remove.
     """
 
     cutoff_time = datetime.now(timezone.utc) - timedelta(days=2)
 
     connection = get_connection()
 
-    rows = connection.execute("""
-        SELECT id, telegram_message_id, image_url, message_date
-        FROM offers
-    """).fetchall()
+    try:
+        rows = connection.execute(
+            """
+            SELECT id, telegram_message_id, image_url
+            FROM offers
+            WHERE message_date < %s
+            """,
+            (cutoff_time,)
+        ).fetchall()
 
-    expired_ids = []
+        expired_ids = [row["id"] for row in rows]
 
-    for row in rows:
-        try:
-            message_date = datetime.fromisoformat(row["message_date"])
+        # Remove any associated local image files if they exist.
+        # Currently image downloading is disabled.
+        for row in rows:
+            image_url = row["image_url"]
 
-            # Convert naive datetime to UTC if necessary
-            if message_date.tzinfo is None:
-                message_date = message_date.replace(tzinfo=timezone.utc)
+            if image_url:
+                image_path = Path(__file__).parent / image_url.lstrip("/")
 
-            if message_date < cutoff_time:
-                expired_ids.append(row["id"])
+                if image_path.exists():
+                    try:
+                        image_path.unlink()
+                        print(
+                            f"🗑️ Image deleted: {image_path.name}"
+                        )
+                    except Exception as e:
+                        print(
+                            f"⚠️ Could not delete image "
+                            f"{image_path}: {e}"
+                        )
 
-                # Delete associated image
-                image_url = row["image_url"]
-
-                if image_url:
-                    image_path = Path(__file__).parent / image_url.lstrip("/")
-
-                    if image_path.exists():
-                        try:
-                            image_path.unlink()
-                            print(
-                                f"🗑️ Image deleted: {image_path.name}"
-                            )
-                        except Exception as e:
-                            print(
-                                f"⚠️ Could not delete image "
-                                f"{image_path}: {e}"
-                            )
-
-        except Exception as e:
-            print(
-                f"⚠️ Could not process offer "
-                f"{row['telegram_message_id']}: {e}"
+        if expired_ids:
+            connection.execute(
+                """
+                DELETE FROM offers
+                WHERE id = ANY(%s)
+                """,
+                (expired_ids,)
             )
 
-    # Delete expired database records
-    if expired_ids:
-        connection.executemany(
-            "DELETE FROM offers WHERE id = ?",
-            [(offer_id,) for offer_id in expired_ids]
-        )
+            connection.commit()
 
-        connection.commit()
+            print(
+                f"🧹 Cleanup complete: "
+                f"{len(expired_ids)} expired offers removed."
+            )
 
-    connection.close()
+        return len(expired_ids)
 
-    if expired_ids:
-        print(
-            f"🧹 Cleanup complete: "
-            f"{len(expired_ids)} expired offers removed."
-        )
-
-    return len(expired_ids)
+    finally:
+        connection.close()
 
 
 if __name__ == "__main__":
     create_database()
-    print("✅ Database created successfully!")
