@@ -2,11 +2,11 @@ import os
 import json
 import asyncio
 
-from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 
 from database import (
     create_database,
@@ -27,6 +27,14 @@ load_dotenv()
 API_ID = int(os.getenv("TELEGRAM_API_ID"))
 API_HASH = os.getenv("TELEGRAM_API_HASH")
 CHANNEL = int(os.getenv("TELEGRAM_CHANNEL"))
+
+TELEGRAM_SESSION = os.getenv("TELEGRAM_SESSION")
+
+if not TELEGRAM_SESSION:
+    raise RuntimeError(
+        "TELEGRAM_SESSION is not configured. "
+        "Add it to the backend .env file."
+    )
 
 
 # ==========================================
@@ -70,7 +78,7 @@ def is_within_2_days(message_date):
 async def save_telegram_offer(message):
     """
     Parse Telegram message, filter old/non-product
-    offers and save the offer to SQLite.
+    offers and save the offer to PostgreSQL.
 
     Telegram images are NOT downloaded.
     """
@@ -246,6 +254,7 @@ def get_latest_saved_message_id():
     connection = get_connection()
 
     try:
+
         result = connection.execute(
             """
             SELECT MAX(telegram_message_id) AS max_message_id
@@ -260,6 +269,7 @@ def get_latest_saved_message_id():
 
     finally:
         connection.close()
+
 
 # ==========================================
 # Sync missed Telegram offers
